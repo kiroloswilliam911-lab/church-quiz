@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لوحة المضيف - مسابقات الكنيسة</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            color: #2d3436;
+            margin: 0;
+            padding: 24px;
+        }
+        .wrap { max-width: 1100px; margin: 0 auto; }
+        h1, h2 { color: #0984e3; margin: 0 0 12px; }
+        h1 { color: #fff; }
+        .sub { color: #dfe6e9; margin-bottom: 20px; }
+        .flash {
+            background: #55efc4;
+            color: #006266;
+            padding: 12px 16px;
+            border-radius: 10px;
+            margin-bottom: 16px;
+        }
+        .card {
+            background: #fff;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.18);
+        }
+        .row { display: flex; flex-wrap: wrap; gap: 10px; }
+        input, select, textarea, button {
+            font-family: inherit;
+            font-size: 15px;
+        }
+        input, select, textarea {
+            padding: 10px 12px;
+            border: 1px solid #dfe6e9;
+            border-radius: 8px;
+            width: 100%;
+        }
+        .grow { flex: 1; min-width: 180px; }
+        .btn {
+            display: inline-block;
+            border: none;
+            background: #0984e3;
+            color: #fff;
+            padding: 10px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-weight: 700;
+            text-decoration: none;
+        }
+        .btn-green { background: #00b894; }
+        .btn-red { background: #d63031; }
+        .btn-gray { background: #636e72; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: right; padding: 10px 8px; border-bottom: 1px solid #eceff1; vertical-align: top; }
+        th { color: #636e72; font-size: 13px; }
+        .badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 700;
+        }
+        .open { background: #55efc4; color: #006266; }
+        .closed { background: #fab1a0; color: #c0392b; }
+        .muted { color: #636e72; font-size: 13px; }
+        .score-form { display: flex; gap: 8px; align-items: center; }
+        .score-form input { width: 80px; }
+        nav { margin-bottom: 18px; }
+        nav a { color: #fff; margin-left: 12px; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <nav>
+            <a href="/dashboard">الحساب الشخصي</a>
+            <a href="/quiz">المسابقة</a>
+            <a href="/logout">خروج</a>
+        </nav>
+        <h1>لوحة المضيف</h1>
+        <p class="sub">مرحباً {{ current.username }} — دورك: {{ role_labels.get(current.role, current.role) }}</p>
+
+        {% with messages = get_flashed_messages() %}
+            {% for message in messages %}
+                <div class="flash">{{ message }}</div>
+            {% endfor %}
+        {% endwith %}
+
+        {% if can_manage_questions %}
+        <section class="card">
+            <h2>إضافة سؤال</h2>
+            <form method="POST" action="/admin/questions">
+                <p><textarea name="question_text" rows="3" placeholder="نص السؤال" required></textarea></p>
+                <div class="row">
+                    <input class="grow" type="text" name="correct_answer" placeholder="الإجابة الصحيحة (للتصحيح)" required>
+                    <input class="grow" type="number" name="points" min="0" value="10" placeholder="الدرجة">
+                    <label style="display:flex;align-items:center;gap:8px;">
+                        <input type="checkbox" name="is_open"> فتح السؤال فوراً
+                    </label>
+                    <button class="btn btn-green" type="submit">إضافة السؤال</button>
+                </div>
+            </form>
+        </section>
+        {% endif %}
+
+        <section class="card">
+            <h2>الحضور</h2>
+            <form method="POST" action="{{ url_for('add_session') }}" class="row" style="margin-bottom:16px;">
+                <input class="grow" type="text" name="title" placeholder="اسم الجلسة (مثال: اجتماع الجمعة)">
+                <button class="btn btn-green" type="submit">فتح تسجيل حضور جديد</button>
+            </form>
+            {% if att_sessions %}
+            <table>
+                <thead><tr><th>الجلسة</th><th>التاريخ</th><th>الحاضرون</th><th>الحالة</th><th></th></tr></thead>
+                <tbody>
+                    {% for s in att_sessions %}
+                    <tr>
+                        <td><a href="{{ url_for('session_attendance', session_id=s.id) }}">{{ s.title }}</a></td>
+                        <td class="muted">{{ s.created_at.strftime('%Y-%m-%d %H:%M') if s.created_at else '' }}</td>
+                        <td>{{ s.records|length }} / {{ participant_total }}</td>
+                        <td>{% if s.is_open %}<span class="badge open">مفتوح</span>{% else %}<span class="badge closed">مغلق</span>{% endif %}</td>
+                        <td>
+                            <form method="POST" action="{{ url_for('toggle_session', session_id=s.id) }}">
+                                <button class="btn {% if s.is_open %}btn-red{% else %}btn-green{% endif %}" type="submit">{% if s.is_open %}إغلاق{% else %}فتح{% endif %}</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">لا توجد جلسات حضور بعد.</p>
+            {% endif %}
+        </section>
+
+        <section class="card">
+            <h2>الأسئلة وفتحها أو إغلاقها</h2>
+            {% if questions %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>السؤال</th>
+                        <th>الإجابة الصحيحة</th>
+                        <th>الدرجة</th>
+                        <th>الحالة</th>
+                        <th>الإجابات</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for q in questions %}
+                    <tr>
+                        <td>{{ q.question_text }}</td>
+                        <td>{{ q.correct_answer }}</td>
+                        <td>{{ q.points }}</td>
+                        <td>
+                            {% if q.is_open %}
+                                <span class="badge open">مفتوح</span>
+                            {% else %}
+                                <span class="badge closed">مغلق</span>
+                            {% endif %}
+                        </td>
+                        <td><a href="{{ url_for('question_responses', question_id=q.id) }}">{{ q.answers|length }} — عرض / من لم يُجب</a></td>
+                        <td>
+                            <form method="POST" action="{{ url_for('toggle_question', question_id=q.id) }}">
+                                <button class="btn {% if q.is_open %}btn-red{% else %}btn-green{% endif %}" type="submit">
+                                    {% if q.is_open %}إغلاق{% else %}فتح{% endif %}
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">لا توجد أسئلة بعد.</p>
+            {% endif %}
+        </section>
+
+        <section class="card">
+            <h2>من أجاب على أي سؤال</h2>
+            {% if answers %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>المشارك</th>
+                        <th>السؤال</th>
+                        <th>الإجابة</th>
+                        <th>الدرجة الحالية</th>
+                        <th>تعيين الدرجة</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for a in answers %}
+                    <tr>
+                        <td>{{ a.user.username if a.user else a.user_id }}</td>
+                        <td>{{ a.question.question_text if a.question else a.question_id }}</td>
+                        <td>
+                            {% if a.answer_text %}<div>{{ a.answer_text }}</div>{% endif %}
+                            {% if a.audio_file %}
+                                <audio controls src="{{ url_for('uploaded_file', filename=a.audio_file) }}"></audio>
+                            {% endif %}
+                            {% if not a.answer_text and not a.audio_file %}
+                                <span class="muted">بدون محتوى</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ a.awarded_points or 0 }}</td>
+                        <td>
+                            <form class="score-form" method="POST" action="{{ url_for('assign_score', answer_id=a.id) }}">
+                                <input type="number" name="awarded_points" min="0" value="{{ a.awarded_points if a.awarded_points else (a.question.points if a.question else 0) }}">
+                                <button class="btn" type="submit">حفظ</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="muted">لم يُرسل أحد إجابة بعد.</p>
+            {% endif %}
+        </section>
+
+        {% if can_appoint %}
+        <section class="card">
+            <h2>تعيين مضيفين مساعدين ومشرفين</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>المستخدم</th>
+                        <th>النقاط</th>
+                        <th>الدور الحالي</th>
+                        <th>تعيين دور</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for u in users %}
+                    <tr>
+                        <td>{{ u.username }}{% if u.id == current.id %} (أنت){% endif %}</td>
+                        <td>{{ u.score or 0 }}</td>
+                        <td>{{ role_labels.get(u.role, u.role) }}</td>
+                        <td>
+                            <form class="score-form" method="POST" action="{{ url_for('set_user_role', user_id=u.id) }}">
+                                <select name="role">
+                                    {% for key, label in role_labels.items() %}
+                                    <option value="{{ key }}" {% if u.role == key %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                                <button class="btn btn-green" type="submit">حفظ الدور</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+        {% endif %}
+    </div>
+</body>
+</html>

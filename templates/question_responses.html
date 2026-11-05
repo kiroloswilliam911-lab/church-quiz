@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>إجابات السؤال</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:'Segoe UI',Tahoma,sans-serif;background:linear-gradient(135deg,#1e3c72,#2a5298);margin:0;padding:24px;color:#2d3436}
+.wrap{max-width:900px;margin:0 auto}
+nav a{color:#fff;margin-left:12px}
+h1{color:#fff}
+.card{background:#fff;border-radius:16px;padding:24px;margin-bottom:20px;box-shadow:0 10px 25px rgba(0,0,0,.18)}
+h2{color:#0984e3;margin-top:0}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:right;padding:10px 8px;border-bottom:1px solid #eceff1;vertical-align:top}
+.btn{border:none;color:#fff;padding:8px 14px;border-radius:20px;cursor:pointer;font-weight:700;font-family:inherit;background:#0984e3}
+.btn-green{background:#00b894}.btn-red{background:#d63031}
+.muted{color:#636e72;font-size:13px}
+</style>
+</head>
+<body><div class="wrap">
+<nav><a href="/admin">لوحة المضيف</a><a href="/dashboard">الحساب الشخصي</a><a href="/logout">خروج</a></nav>
+
+<h1>{{ question.question_text }}</h1>
+<p class="muted" style="color:#dfe6e9">الإجابة الصحيحة: {{ question.correct_answer }} — الدرجة: {{ question.points }}</p>
+<section class="card"><h2>أجابوا ({{ answers|length }})</h2>
+{% if answers %}<table><tbody>
+{% for a in answers %}<tr><td>{{ a.user.username }}</td>
+<td>{% if a.answer_text %}<div>{{ a.answer_text }}</div>{% endif %}{% if a.audio_file %}<audio controls src="{{ url_for('uploaded_file', filename=a.audio_file) }}"></audio>{% endif %}</td>
+<td><form method="POST" action="{{ url_for('assign_score', answer_id=a.id) }}" style="display:flex;gap:6px"><input type="number" name="awarded_points" min="0" style="width:70px" value="{{ a.awarded_points if a.awarded_points else question.points }}"><button class="btn">حفظ ({{ a.awarded_points or 0 }})</button></form></td></tr>{% endfor %}
+</tbody></table>{% else %}<p class="muted">لا إجابات بعد.</p>{% endif %}</section>
+<section class="card"><h2>لم يُجيبوا ({{ not_answered|length }})</h2>
+{% if not_answered %}<p>{% for u in not_answered %}{{ u.username }}{% if not loop.last %}، {% endif %}{% endfor %}</p>{% else %}<p class="muted">أجاب الجميع.</p>{% endif %}</section>
+</div></body></html>

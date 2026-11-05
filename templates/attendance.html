@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>الحضور</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:'Segoe UI',Tahoma,sans-serif;background:linear-gradient(135deg,#1e3c72,#2a5298);margin:0;padding:24px;color:#2d3436}
+.wrap{max-width:900px;margin:0 auto}
+nav a{color:#fff;margin-left:12px}
+h1{color:#fff}
+.card{background:#fff;border-radius:16px;padding:24px;margin-bottom:20px;box-shadow:0 10px 25px rgba(0,0,0,.18)}
+h2{color:#0984e3;margin-top:0}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:right;padding:10px 8px;border-bottom:1px solid #eceff1;vertical-align:top}
+.btn{border:none;color:#fff;padding:8px 14px;border-radius:20px;cursor:pointer;font-weight:700;font-family:inherit;background:#0984e3}
+.btn-green{background:#00b894}.btn-red{background:#d63031}
+.muted{color:#636e72;font-size:13px}
+</style>
+</head>
+<body><div class="wrap">
+<nav><a href="/admin">لوحة المضيف</a><a href="/dashboard">الحساب الشخصي</a><a href="/logout">خروج</a></nav>
+
+<h1>{{ att_session.title }}</h1>
+<p class="muted" style="color:#dfe6e9">حضر {{ present|length }} من {{ total }} — {% if att_session.is_open %}التسجيل مفتوح{% else %}التسجيل مغلق{% endif %}</p>
+<form method="POST" action="{{ url_for('toggle_session', session_id=att_session.id) }}" style="margin-bottom:16px">
+<button class="btn {% if att_session.is_open %}btn-red{% else %}btn-green{% endif %}">{% if att_session.is_open %}إغلاق تسجيل الحضور{% else %}إعادة فتح التسجيل{% endif %}</button>
+</form>
+<section class="card"><h2>الحاضرون ({{ present|length }})</h2>
+{% if present %}<table><tbody>
+{% for u, r in present %}<tr><td>{{ u.username }}</td>
+<td class="muted">{{ r.checked_in_at.strftime('%H:%M') if r.checked_in_at else '' }}{% if r.marked_by_host %} (بواسطة المضيف){% endif %}</td>
+<td><form method="POST" action="{{ url_for('mark_attendance', session_id=att_session.id, user_id=u.id) }}"><button class="btn btn-red">إلغاء الحضور</button></form></td></tr>{% endfor %}
+</tbody></table>{% else %}<p class="muted">لم يحضر أحد بعد.</p>{% endif %}</section>
+<section class="card"><h2>الغائبون ({{ absent|length }})</h2>
+{% if absent %}<table><tbody>
+{% for u in absent %}<tr><td>{{ u.username }}</td>
+<td><form method="POST" action="{{ url_for('mark_attendance', session_id=att_session.id, user_id=u.id) }}"><button class="btn btn-green">تسجيل حضور يدوي</button></form></td></tr>{% endfor %}
+</tbody></table>{% else %}<p class="muted">الجميع حاضر 🎉</p>{% endif %}</section>
+</div></body></html>
