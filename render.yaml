@@ -2,15 +2,11 @@ services:
   - type: web
     name: church-quiz
     runtime: python
-    plan: 0.5c-512mb
+    plan: free
     region: frankfurt
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
     healthCheckPath: /
-    disk:
-      name: church-quiz-uploads
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.13.4
@@ -23,7 +19,7 @@ services:
       - key: INITIAL_ADMIN_CODE
         generateValue: true
       - key: UPLOAD_FOLDER
-        value: /var/data/uploads
+        value: /opt/render/project/src/uploads
       - key: SESSION_COOKIE_SECURE
         value: "true"
 
@@ -31,5 +27,5 @@ databases:
   - name: church-quiz-db
     databaseName: churchquiz
     user: churchquiz
-    plan: 0.1c-256mb
+    plan: free
     region: frankfurt
