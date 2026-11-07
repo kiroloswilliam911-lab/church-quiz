@@ -9,17 +9,31 @@ from flask import (
     url_for,
 )
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 import os
+import hmac
+import secrets
 import uuid
 from datetime import datetime
 from functools import wraps
+from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
-app.secret_key = 'church_secret_key'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///church_quiz.db'
+app.secret_key = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
+database_url = os.environ.get('DATABASE_URL', 'sqlite:///church_quiz.db')
+if database_url.startswith('postgres://'):
+    database_url = database_url.replace('postgres://', 'postgresql+psycopg://', 1)
+elif database_url.startswith('postgresql://'):
+    database_url = database_url.replace('postgresql://', 'postgresql+psycopg://', 1)
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'uploads')
+app.config['UPLOAD_FOLDER'] = os.environ.get(
+    'UPLOAD_FOLDER',
+    os.path.join(app.root_path, 'uploads'),
+)
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', '').lower() == 'true'
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 db = SQLAlchemy(app)
@@ -36,7 +50,7 @@ ROLE_LABELS = {
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(100), unique=True, nullable=False)
-    password = db.Column(db.String(100), nullable=False)
+    password = db.Column(db.String(255), nullable=False)
     score = db.Column(db.Integer, default=0)
     role = db.Column(db.String(20), default='participant')
     is_active = db.Column(db.Boolean, default=True)
@@ -97,8 +111,7 @@ class Attendance(db.Model):
 
 
 def ensure_column(table, name, ddl):
-    columns = db.session.execute(text(f'PRAGMA table_info({table})')).fetchall()
-    column_names = [column[1] for column in columns]
+    column_names = {column['name'] for column in inspect(db.engine).get_columns(table)}
     if name not in column_names:
         db.session.execute(text(f'ALTER TABLE {table} ADD COLUMN {ddl}'))
 
@@ -106,12 +119,12 @@ def ensure_column(table, name, ddl):
 with app.app_context():
     db.create_all()
     ensure_column('user', 'role', "role VARCHAR(20) DEFAULT 'participant'")
-    ensure_column('user', 'is_active', 'is_active BOOLEAN DEFAULT 1')
+    ensure_column('user', 'is_active', 'is_active BOOLEAN DEFAULT TRUE')
     ensure_column('question', 'points', 'points INTEGER DEFAULT 10')
-    ensure_column('question', 'is_open', 'is_open BOOLEAN DEFAULT 0')
+    ensure_column('question', 'is_open', 'is_open BOOLEAN DEFAULT FALSE')
     ensure_column('audio_answer', 'answer_text', 'answer_text VARCHAR(500)')
     ensure_column('audio_answer', 'awarded_points', 'awarded_points INTEGER DEFAULT 0')
-    ensure_column('audio_answer', 'created_at', 'created_at DATETIME')
+    ensure_column('audio_answer', 'created_at', 'created_at TIMESTAMP')
     db.session.commit()
 
 
@@ -162,22 +175,44 @@ def home():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     message = ""
+    bootstrap_code = os.environ.get('INITIAL_ADMIN_CODE')
+    bootstrap_available = bool(
+        bootstrap_code and User.query.filter_by(role='super_admin').count() == 0
+    )
     if request.method == 'POST':
         uname = request.form.get('username')
         pword = request.form.get('password')
+        submitted_bootstrap_code = request.form.get('admin_code') or ''
 
         existing_user = User.query.filter_by(username=uname).first()
         if existing_user:
             message = "اسم المستخدم موجود مسبقاً!"
+        elif (
+            bootstrap_available
+            and submitted_bootstrap_code
+            and not hmac.compare_digest(submitted_bootstrap_code, bootstrap_code)
+        ):
+            message = "رمز إنشاء المضيف غير صحيح."
         else:
-            role = 'super_admin' if User.query.count() == 0 else 'participant'
+            is_first_user = User.query.count() == 0
+            has_admin_code = (
+                bootstrap_available
+                and submitted_bootstrap_code
+                and hmac.compare_digest(submitted_bootstrap_code, bootstrap_code)
+            )
+            role = 'super_admin' if has_admin_code or (not bootstrap_code and is_first_user) else 'participant'
             new_user = User(username=uname, password=pword, role=role)
+            new_user.password = generate_password_hash(pword)
             db.session.add(new_user)
             db.session.commit()
             session['username'] = new_user.username
             return redirect(url_for('dashboard'))
 
-    return render_template('register.html', message=message)
+    return render_template(
+        'register.html',
+        message=message,
+        bootstrap_available=bootstrap_available,
+    )
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -187,8 +222,15 @@ def login():
         uname = request.form.get('username')
         pword = request.form.get('password')
 
-        user = User.query.filter_by(username=uname, password=pword).first()
-        if user:
+        user = User.query.filter_by(username=uname).first()
+        if user and (
+            check_password_hash(user.password, pword)
+            if user.password.startswith(('scrypt:', 'pbkdf2:'))
+            else user.password == pword
+        ):
+            if not user.password.startswith(('scrypt:', 'pbkdf2:')):
+                user.password = generate_password_hash(pword)
+                db.session.commit()
             session['username'] = user.username
             return redirect(url_for('dashboard'))
         else:
