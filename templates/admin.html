@@ -151,6 +151,7 @@
                         <th>الدرجة</th>
                         <th>الحالة</th>
                         <th>الإجابات</th>
+                        <th>من شاهدوا</th>
                         <th></th>
                     </tr>
                 </thead>
@@ -167,13 +168,19 @@
                                 <span class="badge closed">مغلق</span>
                             {% endif %}
                         </td>
-                        <td><a href="{{ url_for('question_responses', question_id=q.id) }}">{{ q.answers|length }} — عرض / من لم يُجب</a></td>
+                        <td><a href="{{ url_for('question_responses', question_id=q.id) }}">{{ q.answers|length }} — عرض الردود</a></td>
+                        <td><a href="{{ url_for('question_responses', question_id=q.id) }}">{{ q.accesses|length }} — عرض من شاهدوا السؤال</a></td>
                         <td>
+                            {% if can_manage_questions %}
                             <form method="POST" action="{{ url_for('toggle_question', question_id=q.id) }}">
                                 <button class="btn {% if q.is_open %}btn-red{% else %}btn-green{% endif %}" type="submit">
                                     {% if q.is_open %}إغلاق{% else %}فتح{% endif %}
                                 </button>
                             </form>
+                            <form method="POST" action="{{ url_for('delete_question', question_id=q.id) }}" onsubmit="return confirm('سيتم حذف السؤال وجميع إجاباته ودرجاتها. هل تريد المتابعة؟');" style="margin-top:8px">
+                                <button class="btn btn-red" type="submit">حذف</button>
+                            </form>
+                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}

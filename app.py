@@ -50,6 +50,18 @@ class Question(db.Model):
     is_open = db.Column(db.Boolean, default=False)
 
 
+class QuestionAccess(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    question_id = db.Column(db.Integer, db.ForeignKey('question.id'), nullable=False)
+    accessed_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (db.UniqueConstraint('user_id', 'question_id'),)
+
+    user = db.relationship('User', backref='question_accesses')
+    question = db.relationship('Question', backref='accesses')
+
+
 class AudioAnswer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
@@ -220,6 +232,22 @@ def check_in(user, session_id):
 @login_required
 def quiz(user):
     questions = Question.query.filter_by(is_open=True).order_by(Question.id).all()
+    if user.role == 'participant' and questions:
+        question_ids = [question.id for question in questions]
+        existing_ids = {
+            access.question_id
+            for access in QuestionAccess.query.filter(
+                QuestionAccess.user_id == user.id,
+                QuestionAccess.question_id.in_(question_ids),
+            ).all()
+        }
+        db.session.add_all(
+            QuestionAccess(user_id=user.id, question_id=question_id)
+            for question_id in question_ids
+            if question_id not in existing_ids
+        )
+        if len(existing_ids) != len(question_ids):
+            db.session.commit()
     answered_ids = {
         answer.question_id
         for answer in AudioAnswer.query.filter_by(user_id=user.id).all()
@@ -258,6 +286,12 @@ def submit_answer(user):
     if not answer_text and not audio_filename:
         flash('أدخل إجابة نصية أو سجّل صوتاً قبل الإرسال.')
         return redirect(url_for('quiz'))
+
+    if user.role == 'participant' and not QuestionAccess.query.filter_by(
+        user_id=user.id,
+        question_id=question.id,
+    ).first():
+        db.session.add(QuestionAccess(user_id=user.id, question_id=question.id))
 
     db.session.add(AudioAnswer(
         user_id=user.id,
@@ -311,17 +345,20 @@ def add_question(user):
 
     question_text = (request.form.get('question_text') or '').strip()
     correct_answer = (request.form.get('correct_answer') or '').strip()
-    points = request.form.get('points', type=int) or 10
+    points = request.form.get('points', type=int)
     is_open = request.form.get('is_open') == 'on'
 
     if not question_text or not correct_answer:
         flash('أدخل نص السؤال والإجابة الصحيحة.')
         return redirect(url_for('admin'))
+    if points is not None and points < 0:
+        flash('يجب أن تكون الدرجة صفراً أو أكثر.')
+        return redirect(url_for('admin'))
 
     db.session.add(Question(
         question_text=question_text,
         correct_answer=correct_answer,
-        points=max(points, 0),
+        points=10 if points is None else points,
         is_open=is_open,
     ))
     db.session.commit()
@@ -332,10 +369,61 @@ def add_question(user):
 @app.route('/admin/questions/<int:question_id>/toggle', methods=['POST'])
 @staff_required
 def toggle_question(user, question_id):
+    if not can_manage_questions(user):
+        flash('لا يمكنك فتح الأسئلة أو إغلاقها.')
+        return redirect(url_for('admin'))
+
     question = Question.query.get_or_404(question_id)
     question.is_open = not bool(question.is_open)
     db.session.commit()
     flash('تم فتح السؤال للمشاركين.' if question.is_open else 'تم إغلاق السؤال.')
+    return redirect(url_for('admin'))
+
+
+@app.route('/admin/questions/<int:question_id>/delete', methods=['POST'])
+@staff_required
+def delete_question(user, question_id):
+    if not can_manage_questions(user):
+        flash('لا يمكنك حذف الأسئلة.')
+        return redirect(url_for('admin'))
+
+    question = Question.query.get_or_404(question_id)
+    answers = AudioAnswer.query.filter_by(question_id=question.id).all()
+    uploaded_files = [answer.audio_file for answer in answers if answer.audio_file]
+    users = {
+        participant.id: participant
+        for participant in User.query.filter(
+            User.id.in_([answer.user_id for answer in answers])
+        ).all()
+    } if answers else {}
+
+    for answer in answers:
+        participant = users.get(answer.user_id)
+        if participant:
+            participant.score = (participant.score or 0) - (answer.awarded_points or 0)
+        db.session.delete(answer)
+
+    QuestionAccess.query.filter_by(question_id=question.id).delete()
+    db.session.delete(question)
+    db.session.commit()
+
+    failed_files = []
+    for filename in uploaded_files:
+        if os.path.basename(filename) != filename:
+            app.logger.error('Skipped invalid uploaded filename while deleting question: %r', filename)
+            failed_files.append(filename)
+            continue
+        path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+        except OSError:
+            app.logger.exception('Could not remove uploaded answer file %s', filename)
+            failed_files.append(filename)
+
+    flash('تم حذف السؤال وإجاباته.')
+    if failed_files:
+        flash('تعذر حذف بعض الملفات الصوتية المرتبطة بالسؤال؛ راجع سجل التطبيق.')
     return redirect(url_for('admin'))
 
 
@@ -445,15 +533,18 @@ def question_responses(user, question_id):
     question = Question.query.get_or_404(question_id)
     answers = AudioAnswer.query.filter_by(question_id=question.id).order_by(AudioAnswer.id).all()
     answered_ids = {a.user_id for a in answers}
-    not_answered = [
-        u for u in User.query.filter_by(role='participant').order_by(User.username).all()
-        if u.id not in answered_ids
-    ]
+    participants = User.query.filter_by(role='participant').order_by(User.username).all()
+    accessed_ids = {
+        access.user_id
+        for access in QuestionAccess.query.filter_by(question_id=question.id).all()
+    } | answered_ids
     return render_template(
         'question_responses.html',
         question=question,
         answers=answers,
-        not_answered=not_answered,
+        not_answered=[u for u in participants if u.id not in answered_ids],
+        accessed=[u for u in participants if u.id in accessed_ids],
+        not_accessed=[u for u in participants if u.id not in accessed_ids],
     )
 
 

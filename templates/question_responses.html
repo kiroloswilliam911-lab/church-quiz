@@ -32,4 +32,8 @@ th,td{text-align:right;padding:10px 8px;border-bottom:1px solid #eceff1;vertical
 </tbody></table>{% else %}<p class="muted">لا إجابات بعد.</p>{% endif %}</section>
 <section class="card"><h2>لم يُجيبوا ({{ not_answered|length }})</h2>
 {% if not_answered %}<p>{% for u in not_answered %}{{ u.username }}{% if not loop.last %}، {% endif %}{% endfor %}</p>{% else %}<p class="muted">أجاب الجميع.</p>{% endif %}</section>
+<section class="card"><h2>شاهدوا السؤال ({{ accessed|length }})</h2>
+{% if accessed %}<p>{% for u in accessed %}{{ u.username }}{% if not loop.last %}، {% endif %}{% endfor %}</p>{% else %}<p class="muted">لم يشاهد أحد السؤال بعد.</p>{% endif %}</section>
+<section class="card"><h2>لم يشاهدوا السؤال ({{ not_accessed|length }})</h2>
+{% if not_accessed %}<p>{% for u in not_accessed %}{{ u.username }}{% if not loop.last %}، {% endif %}{% endfor %}</p>{% else %}<p class="muted">شاهد جميع المشاركين السؤال.</p>{% endif %}</section>
 </div></body></html>
