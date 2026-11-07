@@ -14,8 +14,9 @@ import os
 import hmac
 import secrets
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from functools import wraps
+from zoneinfo import ZoneInfo
 from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
@@ -54,6 +55,8 @@ class User(db.Model):
     score = db.Column(db.Integer, default=0)
     role = db.Column(db.String(20), default='participant')
     is_active = db.Column(db.Boolean, default=True)
+    streak_days = db.Column(db.Integer, default=0, nullable=False)
+    last_answer_day = db.Column(db.Date, nullable=True)
 
 
 class Question(db.Model):
@@ -120,6 +123,8 @@ with app.app_context():
     db.create_all()
     ensure_column('user', 'role', "role VARCHAR(20) DEFAULT 'participant'")
     ensure_column('user', 'is_active', 'is_active BOOLEAN DEFAULT TRUE')
+    ensure_column('user', 'streak_days', 'streak_days INTEGER NOT NULL DEFAULT 0')
+    ensure_column('user', 'last_answer_day', 'last_answer_day DATE')
     ensure_column('question', 'points', 'points INTEGER DEFAULT 10')
     ensure_column('question', 'is_open', 'is_open BOOLEAN DEFAULT FALSE')
     ensure_column('audio_answer', 'answer_text', 'answer_text VARCHAR(500)')
@@ -163,6 +168,31 @@ def can_manage_questions(user):
 
 def can_appoint(user):
     return user.role == 'super_admin'
+
+
+def cairo_today():
+    return datetime.now(ZoneInfo('Africa/Cairo')).date()
+
+
+def current_streak(user, today=None):
+    today = today or cairo_today()
+    if not user.last_answer_day:
+        return 0
+    days_since_answer = (today - user.last_answer_day).days
+    if days_since_answer < 0 or days_since_answer > 1:
+        return 0
+    return user.streak_days or 0
+
+
+def record_answer_streak(user, today=None):
+    today = today or cairo_today()
+    if user.last_answer_day == today:
+        return
+    if user.last_answer_day == today - timedelta(days=1):
+        user.streak_days = (user.streak_days or 0) + 1
+    else:
+        user.streak_days = 1
+    user.last_answer_day = today
 
 
 @app.route('/')
@@ -248,6 +278,7 @@ def dashboard(user):
         'dashboard.html',
         username=user.username,
         score=user.score or 0,
+        streak_days=current_streak(user),
         is_staff=user.role in HOST_ROLES,
         role_label=ROLE_LABELS.get(user.role, user.role),
         open_sessions=open_sessions,
@@ -300,6 +331,7 @@ def quiz(user):
         questions=questions,
         answered_ids=answered_ids,
         is_staff=user.role in HOST_ROLES,
+        streak_days=current_streak(user),
     )
 
 
@@ -341,6 +373,7 @@ def submit_answer(user):
         answer_text=answer_text or None,
         audio_file=audio_filename or '',
     ))
+    record_answer_streak(user)
     db.session.commit()
     flash('تم إرسال إجابتك.')
     return redirect(url_for('quiz'))
@@ -362,6 +395,7 @@ def admin(user):
         .all()
     )
     users = User.query.order_by(User.username).all()
+    streaks = {participant.id: current_streak(participant) for participant in users}
     att_sessions = AttendanceSession.query.order_by(AttendanceSession.id.desc()).all()
     participant_total = User.query.filter_by(role='participant').count()
     return render_template(
@@ -372,6 +406,7 @@ def admin(user):
         questions=questions,
         answers=answers,
         users=users,
+        streaks=streaks,
         role_labels=ROLE_LABELS,
         can_manage_questions=can_manage_questions(user),
         can_appoint=can_appoint(user),

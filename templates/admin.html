@@ -9,7 +9,7 @@
         * { box-sizing: border-box; }
         body {
             font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
-            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            background: linear-gradient(rgba(7, 28, 48, 0.48), rgba(7, 28, 48, 0.62)), url("{{ url_for('static', filename='images/masabaqa.jpg') }}") center / cover fixed no-repeat;
             color: #2d3436;
             margin: 0;
             padding: 24px;
@@ -242,6 +242,7 @@
                     <tr>
                         <th>المستخدم</th>
                         <th>النقاط</th>
+                        <th>سلسلة الإجابات</th>
                         <th>الدور الحالي</th>
                         <th>تعيين دور</th>
                     </tr>
@@ -251,6 +252,7 @@
                     <tr>
                         <td>{{ u.username }}{% if u.id == current.id %} (أنت){% endif %}</td>
                         <td>{{ u.score or 0 }}</td>
+                        <td>🔥 {{ streaks[u.id] }}</td>
                         <td>{{ role_labels.get(u.role, u.role) }}</td>
                         <td>
                             <form class="score-form" method="POST" action="{{ url_for('set_user_role', user_id=u.id) }}">
