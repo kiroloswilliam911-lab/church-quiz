@@ -2,6 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>تسجيل حساب جديد - مسابقات الكنيسة</title>
     <style>
         body {
@@ -9,11 +10,12 @@
             background: linear-gradient(rgba(7, 28, 48, 0.48), rgba(7, 28, 48, 0.62)), url("{{ url_for('static', filename='images/masabaqa.jpg') }}") center / cover fixed no-repeat;
             color: #fff;
             margin: 0;
-            padding: 0;
+            padding: 24px 12px;
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
+            min-height: 100vh;
+            box-sizing: border-box;
         }
         .card {
             background: white;
@@ -23,6 +25,7 @@
             box-shadow: 0 10px 25px rgba(0,0,0,0.2);
             max-width: 400px;
             width: 90%;
+            box-sizing: border-box;
             text-align: center;
         }
         h2 {
@@ -69,6 +72,11 @@
         .back-link:hover {
             text-decoration: underline;
         }
+        @media (max-width: 480px) {
+            .card {
+                padding: 28px 20px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -81,6 +89,7 @@
 
         <form method="POST">
             <input type="text" name="username" placeholder="اسم المستخدم" required>
+            <input type="email" name="email" placeholder="البريد الإلكتروني لاستعادة كلمة المرور" autocomplete="email" required>
             <input type="password" name="password" placeholder="كلمة المرور" required>
             {% if bootstrap_available %}
                 <input type="password" name="admin_code" placeholder="رمز إنشاء المضيف الرئيسي (اختياري)">

@@ -77,7 +77,6 @@
                     {% else %}
                         <form method="POST" action="/quiz/answer" enctype="multipart/form-data">
                             <input type="hidden" name="question_id" value="{{ q.id }}">
-                            <input type="text" name="answer_text" placeholder="إجابتك" style="width:100%; padding:10px; border-radius:8px; border:1px solid #dfe6e9; margin:8px 0;">
                             <input type="file" name="audio" accept="audio/*" style="margin:8px 0;">
                             <button type="submit" class="btn" style="background:#00b894; margin-top:8px;">إرسال الإجابة</button>
                         </form>
@@ -89,7 +88,7 @@
         {% endif %}
 
         <div style="text-align: center;">
-            {% if is_staff %}<a href="/admin" class="btn" style="background: #6c5ce7;">لوحة المضيف</a>{% endif %}
+            {% if is_staff %}<a href="/host" class="btn" style="background: #6c5ce7;">لوحة المضيف</a>{% endif %}
             <a href="/dashboard" class="btn" style="background: #0984e3;">العودة للحساب الشخصي</a>
         </div>
     </div>

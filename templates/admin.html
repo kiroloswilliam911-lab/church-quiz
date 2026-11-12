@@ -236,7 +236,7 @@
 
         {% if can_appoint %}
         <section class="card">
-            <h2>تعيين مضيفين مساعدين ومشرفين</h2>
+            <h2>إضافة مضيف مساعد أو مشرف</h2>
             <table>
                 <thead>
                     <tr>
@@ -255,13 +255,46 @@
                         <td>🔥 {{ streaks[u.id] }}</td>
                         <td>{{ role_labels.get(u.role, u.role) }}</td>
                         <td>
+                            {% if u.id != current.id and u.role != 'super_admin' %}
                             <form class="score-form" method="POST" action="{{ url_for('set_user_role', user_id=u.id) }}">
                                 <select name="role">
-                                    {% for key, label in role_labels.items() %}
+                                    {% for key, label in role_labels.items() if key != 'super_admin' %}
                                     <option value="{{ key }}" {% if u.role == key %}selected{% endif %}>{{ label }}</option>
                                     {% endfor %}
                                 </select>
                                 <button class="btn btn-green" type="submit">حفظ الدور</button>
+                            </form>
+                            {% else %}
+                                <span class="muted">غير متاح</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+        {% endif %}
+
+        {% if can_appoint %}
+        <section class="card">
+            <h2>بريد استعادة كلمة المرور</h2>
+            <p class="muted">أضف البريد الذي يستطيع كل مستخدم فتحه لاستقبال رابط تغيير كلمة المرور.</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>المستخدم</th>
+                        <th>البريد الإلكتروني</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for u in users %}
+                    <tr>
+                        <td>{{ u.username }}{% if u.id == current.id %} (أنت){% endif %}</td>
+                        <td>
+                            <form class="score-form" method="POST" action="{{ url_for('set_user_email', user_id=u.id) }}">
+                                <input type="email" name="email" value="{{ u.email or '' }}" placeholder="البريد الإلكتروني" autocomplete="email" required>
+                                <button class="btn btn-green" type="submit">حفظ البريد</button>
                             </form>
                         </td>
                     </tr>
@@ -270,6 +303,54 @@
             </table>
         </section>
         {% endif %}
+
+        <section class="card">
+            <h2>إدارة الحسابات</h2>
+            <p class="muted">إيقاف الحساب يمنع تسجيل الدخول مع الاحتفاظ بالسجلات. الحذف نهائي ويمسح سجل الحضور والإجابات والدرجات.</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>المستخدم</th>
+                        <th>الدور</th>
+                        <th>النقاط</th>
+                        <th>الحالة</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for u in users %}
+                    <tr>
+                        <td>{{ u.username }}{% if u.id == current.id %} (أنت){% endif %}</td>
+                        <td>{{ role_labels.get(u.role, u.role) }}</td>
+                        <td>{{ u.score or 0 }}</td>
+                        <td>
+                            {% if u.is_active %}
+                                <span class="badge open">نشط</span>
+                            {% else %}
+                                <span class="badge closed">موقوف</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if u.id == current.id or u.role == 'super_admin' %}
+                                <span class="muted">غير متاح</span>
+                            {% else %}
+                                {% if u.role not in ('co_host', 'moderator') or can_appoint %}
+                                <form method="POST" action="{{ url_for('toggle_user_active', user_id=u.id) }}" onsubmit="return confirm('{% if u.is_active %}سيتم إيقاف هذا الحساب ومنعه من تسجيل الدخول. هل تريد المتابعة؟{% else %}سيتم تفعيل هذا الحساب مجدداً. هل تريد المتابعة؟{% endif %}');" style="margin-bottom:8px;">
+                                    <button class="btn {% if u.is_active %}btn-red{% else %}btn-green{% endif %}" type="submit">{% if u.is_active %}إيقاف الحساب{% else %}تفعيل الحساب{% endif %}</button>
+                                </form>
+                                {% endif %}
+                                {% if can_appoint %}
+                                <form method="POST" action="{{ url_for('delete_user', user_id=u.id) }}" onsubmit="return confirm('سيتم حذف حساب {{ u.username }} نهائياً مع سجلات حضوره وإجاباته ودرجاته. لا يمكن التراجع. هل تريد المتابعة؟');">
+                                    <button class="btn btn-red" type="submit">حذف نهائي</button>
+                                </form>
+                                {% endif %}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
     </div>
 </body>
 </html>

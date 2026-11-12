@@ -20,7 +20,7 @@ th,td{text-align:right;padding:10px 8px;border-bottom:1px solid #eceff1;vertical
 </style>
 </head>
 <body><div class="wrap">
-<nav><a href="/admin">لوحة المضيف</a><a href="/dashboard">الحساب الشخصي</a><a href="/logout">خروج</a></nav>
+<nav><a href="/host">لوحة المضيف</a><a href="/dashboard">الحساب الشخصي</a><a href="/logout">خروج</a></nav>
 
 <h1>{{ att_session.title }}</h1>
 <p class="muted" style="color:#dfe6e9">حضر {{ present|length }} من {{ total }} — {% if att_session.is_open %}التسجيل مفتوح{% else %}التسجيل مغلق{% endif %}</p>

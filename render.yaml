@@ -22,6 +22,14 @@ services:
         value: /opt/render/project/src/uploads
       - key: SESSION_COOKIE_SECURE
         value: "true"
+      - key: MAIL_USERNAME
+        sync: false
+      - key: MAIL_PASSWORD
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: PRIMARY_HOST_EMAIL
+        sync: false
 
 databases:
   - name: church-quiz-db

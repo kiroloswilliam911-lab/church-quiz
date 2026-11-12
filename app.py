@@ -12,9 +12,13 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import inspect, text
 import os
 import hmac
+import hashlib
+import re
 import secrets
+import smtplib
 import uuid
 from datetime import date, datetime, timedelta
+from email.message import EmailMessage
 from functools import wraps
 from zoneinfo import ZoneInfo
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -39,7 +43,6 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 db = SQLAlchemy(app)
 
-HOST_ROLES = ('super_admin', 'co_host', 'moderator')
 ROLE_LABELS = {
     'super_admin': 'مضيف',
     'co_host': 'مضيف مساعد',
@@ -51,12 +54,22 @@ ROLE_LABELS = {
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(100), unique=True, nullable=False)
+    email = db.Column(db.String(254), nullable=True)
     password = db.Column(db.String(255), nullable=False)
     score = db.Column(db.Integer, default=0)
     role = db.Column(db.String(20), default='participant')
     is_active = db.Column(db.Boolean, default=True)
     streak_days = db.Column(db.Integer, default=0, nullable=False)
     last_answer_day = db.Column(db.Date, nullable=True)
+
+
+class PasswordResetToken(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    token_hash = db.Column(db.String(64), unique=True, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    used_at = db.Column(db.DateTime, nullable=True)
 
 
 class Question(db.Model):
@@ -122,6 +135,7 @@ def ensure_column(table, name, ddl):
 with app.app_context():
     db.create_all()
     ensure_column('user', 'role', "role VARCHAR(20) DEFAULT 'participant'")
+    ensure_column('user', 'email', 'email VARCHAR(254)')
     ensure_column('user', 'is_active', 'is_active BOOLEAN DEFAULT TRUE')
     ensure_column('user', 'streak_days', 'streak_days INTEGER NOT NULL DEFAULT 0')
     ensure_column('user', 'last_answer_day', 'last_answer_day DATE')
@@ -130,13 +144,20 @@ with app.app_context():
     ensure_column('audio_answer', 'answer_text', 'answer_text VARCHAR(500)')
     ensure_column('audio_answer', 'awarded_points', 'awarded_points INTEGER DEFAULT 0')
     ensure_column('audio_answer', 'created_at', 'created_at TIMESTAMP')
+    db.session.execute(text(
+        'CREATE UNIQUE INDEX IF NOT EXISTS uq_user_email ON user (email)'
+    ))
     db.session.commit()
 
 
 def current_user():
     if 'username' not in session:
         return None
-    return User.query.filter_by(username=session['username']).first()
+    user = User.query.filter_by(username=session['username']).first()
+    if user and not user.is_active:
+        session.clear()
+        return None
+    return user
 
 
 def login_required(view):
@@ -155,19 +176,65 @@ def staff_required(view):
         user = current_user()
         if not user:
             return redirect(url_for('login'))
-        if user.role not in HOST_ROLES:
-            flash('هذه الصفحة مخصصة للمضيف والمشرفين فقط.')
+        if not is_primary_host(user) and user.role not in ('co_host', 'moderator'):
+            flash('هذه الصفحة مخصصة للمضيفين فقط.')
             return redirect(url_for('dashboard'))
         return view(user, *args, **kwargs)
     return wrapped
 
 
 def can_manage_questions(user):
-    return user.role in ('super_admin', 'co_host')
+    return is_primary_host(user) or user.role in ('co_host', 'moderator')
 
 
 def can_appoint(user):
-    return user.role == 'super_admin'
+    return is_primary_host(user)
+
+
+def is_primary_host(user):
+    if user.role != 'super_admin':
+        return False
+    primary_host = User.query.filter_by(role='super_admin').order_by(User.id).first()
+    return primary_host is not None and primary_host.id == user.id
+
+
+def normalize_email(email):
+    return (email or '').strip().lower()
+
+
+def is_valid_email(email):
+    return (
+        len(email) <= 254
+        and re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email) is not None
+    )
+
+
+def send_password_reset_email(recipient, reset_url):
+    mail_username = os.environ.get('MAIL_USERNAME')
+    mail_password = (os.environ.get('MAIL_PASSWORD') or '').replace(' ', '')
+    if not mail_username or not mail_password:
+        raise RuntimeError('MAIL_USERNAME and MAIL_PASSWORD must be configured.')
+
+    message = EmailMessage()
+    message['Subject'] = 'إعادة تعيين كلمة مرور مسابقات الكنيسة'
+    message['From'] = mail_username
+    message['To'] = recipient
+    message.set_content(
+        'وصلنا طلب لتغيير كلمة مرور حسابك في مسابقات الكنيسة.\n\n'
+        f'افتح الرابط التالي لتعيين كلمة مرور جديدة خلال 15 دقيقة:\n{reset_url}\n\n'
+        'إذا لم تطلب تغيير كلمة المرور، تجاهل هذه الرسالة.'
+    )
+
+    with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=15) as smtp:
+        smtp.login(mail_username, mail_password)
+        smtp.send_message(message)
+
+
+def password_reset_link(token):
+    public_base_url = (os.environ.get('PUBLIC_BASE_URL') or '').strip().rstrip('/')
+    if not public_base_url.startswith('https://'):
+        raise RuntimeError('PUBLIC_BASE_URL must be configured with the HTTPS site URL.')
+    return f'{public_base_url}{url_for("reset_password", token=token)}'
 
 
 def cairo_today():
@@ -202,6 +269,17 @@ def home():
     return render_template('index.html')
 
 
+@app.route('/host')
+def host_portal():
+    user = current_user()
+    if not user:
+        return redirect(url_for('login', next='host'))
+    if not is_primary_host(user):
+        flash('رابط المضيف مخصص لحساب المضيف الرئيسي.')
+        return redirect(url_for('dashboard'))
+    return redirect(url_for('admin'))
+
+
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     message = ""
@@ -210,13 +288,21 @@ def register():
         bootstrap_code and User.query.filter_by(role='super_admin').count() == 0
     )
     if request.method == 'POST':
-        uname = request.form.get('username')
+        uname = (request.form.get('username') or '').strip()
+        email = normalize_email(request.form.get('email'))
         pword = request.form.get('password')
         submitted_bootstrap_code = request.form.get('admin_code') or ''
 
         existing_user = User.query.filter_by(username=uname).first()
-        if existing_user:
+        existing_email = User.query.filter(
+            db.func.lower(User.email) == email
+        ).first()
+        if not is_valid_email(email):
+            message = "أدخل بريدًا إلكترونيًا صحيحًا."
+        elif existing_user:
             message = "اسم المستخدم موجود مسبقاً!"
+        elif existing_email:
+            message = "البريد الإلكتروني مستخدم في حساب آخر."
         elif (
             bootstrap_available
             and submitted_bootstrap_code
@@ -231,7 +317,7 @@ def register():
                 and hmac.compare_digest(submitted_bootstrap_code, bootstrap_code)
             )
             role = 'super_admin' if has_admin_code or (not bootstrap_code and is_first_user) else 'participant'
-            new_user = User(username=uname, password=pword, role=role)
+            new_user = User(username=uname, email=email, password=pword, role=role)
             new_user.password = generate_password_hash(pword)
             db.session.add(new_user)
             db.session.commit()
@@ -243,6 +329,108 @@ def register():
         message=message,
         bootstrap_available=bootstrap_available,
     )
+
+
+@app.route('/forgot-password', methods=['GET', 'POST'])
+def forgot_password():
+    message = ''
+    if request.method == 'POST':
+        email = normalize_email(request.form.get('email'))
+        user = None
+        if is_valid_email(email):
+            user = User.query.filter(
+                db.func.lower(User.email) == email,
+                User.is_active.is_(True),
+            ).first()
+
+            primary_host_email = normalize_email(
+                os.environ.get('PRIMARY_HOST_EMAIL')
+            )
+            if not user and email == primary_host_email and primary_host_email:
+                primary_host = (
+                    User.query
+                    .filter_by(role='super_admin', is_active=True)
+                    .order_by(User.id)
+                    .first()
+                )
+                if primary_host and not primary_host.email:
+                    primary_host.email = primary_host_email
+                    db.session.commit()
+                    user = primary_host
+
+        if user:
+            now = datetime.utcnow()
+            recent_reset = PasswordResetToken.query.filter(
+                PasswordResetToken.user_id == user.id,
+                PasswordResetToken.created_at >= now - timedelta(minutes=1),
+            ).first()
+            if not recent_reset:
+                PasswordResetToken.query.filter_by(
+                    user_id=user.id,
+                    used_at=None,
+                ).update({'used_at': now}, synchronize_session=False)
+
+                token = secrets.token_urlsafe(32)
+                reset = PasswordResetToken(
+                    user_id=user.id,
+                    token_hash=hashlib.sha256(token.encode('utf-8')).hexdigest(),
+                    created_at=now,
+                    expires_at=now + timedelta(minutes=15),
+                )
+                db.session.add(reset)
+                db.session.commit()
+
+                try:
+                    send_password_reset_email(email, password_reset_link(token))
+                except (OSError, RuntimeError, smtplib.SMTPException):
+                    app.logger.exception(
+                        'Could not send password reset email for user id %s',
+                        user.id,
+                    )
+                    reset.used_at = datetime.utcnow()
+                    db.session.commit()
+
+        message = (
+            'لو البريد الإلكتروني مرتبطًا بحساب نشط، هتوصلك رسالة فيها رابط '
+            'لتغيير كلمة المرور. راجع مجلد الرسائل غير المرغوب فيها أيضًا.'
+        )
+
+    return render_template('forgot_password.html', message=message)
+
+
+@app.route('/reset-password/<token>', methods=['GET', 'POST'])
+def reset_password(token):
+    token_hash = hashlib.sha256(token.encode('utf-8')).hexdigest()
+    reset = PasswordResetToken.query.filter_by(token_hash=token_hash).first()
+    now = datetime.utcnow()
+    user = db.session.get(User, reset.user_id) if reset else None
+    if (
+        not reset
+        or reset.used_at
+        or reset.expires_at <= now
+        or not user
+        or not user.is_active
+    ):
+        return render_template('reset_password.html', invalid=True), 400
+
+    message = ''
+    if request.method == 'POST':
+        password = request.form.get('password') or ''
+        confirm_password = request.form.get('confirm_password') or ''
+        if len(password) < 8:
+            message = 'كلمة المرور يجب ألا تقل عن 8 أحرف.'
+        elif password != confirm_password:
+            message = 'كلمتا المرور غير متطابقتين.'
+        else:
+            user.password = generate_password_hash(password)
+            PasswordResetToken.query.filter_by(
+                user_id=user.id,
+                used_at=None,
+            ).update({'used_at': now}, synchronize_session=False)
+            db.session.commit()
+            return render_template('reset_password.html', success=True)
+
+    return render_template('reset_password.html', message=message)
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -258,15 +446,24 @@ def login():
             if user.password.startswith(('scrypt:', 'pbkdf2:'))
             else user.password == pword
         ):
-            if not user.password.startswith(('scrypt:', 'pbkdf2:')):
-                user.password = generate_password_hash(pword)
-                db.session.commit()
-            session['username'] = user.username
-            return redirect(url_for('dashboard'))
+            if not user.is_active:
+                message = "هذا الحساب موقوف. تواصل مع المضيف."
+            else:
+                if not user.password.startswith(('scrypt:', 'pbkdf2:')):
+                    user.password = generate_password_hash(pword)
+                    db.session.commit()
+                session['username'] = user.username
+                if request.form.get('next') == 'host' and is_primary_host(user):
+                    return redirect(url_for('host_portal'))
+                return redirect(url_for('dashboard'))
         else:
             message = "بيانات الدخول غير صحيحة!"
 
-    return render_template('login.html', message=message)
+    return render_template(
+        'login.html',
+        message=message,
+        next_page='host' if request.args.get('next') == 'host' else '',
+    )
 
 
 @app.route('/dashboard')
@@ -279,7 +476,7 @@ def dashboard(user):
         username=user.username,
         score=user.score or 0,
         streak_days=current_streak(user),
-        is_staff=user.role in HOST_ROLES,
+        is_staff=is_primary_host(user),
         role_label=ROLE_LABELS.get(user.role, user.role),
         open_sessions=open_sessions,
         attended_ids=attended_ids,
@@ -330,7 +527,7 @@ def quiz(user):
         username=user.username,
         questions=questions,
         answered_ids=answered_ids,
-        is_staff=user.role in HOST_ROLES,
+        is_staff=is_primary_host(user),
         streak_days=current_streak(user),
     )
 
@@ -349,7 +546,6 @@ def submit_answer(user):
         flash('لقد أجبت على هذا السؤال مسبقاً.')
         return redirect(url_for('quiz'))
 
-    answer_text = (request.form.get('answer_text') or '').strip()
     audio = request.files.get('audio')
     audio_filename = None
     if audio and audio.filename:
@@ -357,9 +553,9 @@ def submit_answer(user):
         audio_filename = f'{uuid.uuid4().hex}{ext}'
         audio.save(os.path.join(app.config['UPLOAD_FOLDER'], audio_filename))
 
-    if not answer_text and not audio_filename:
-        flash('أدخل إجابة نصية أو سجّل صوتاً قبل الإرسال.')
-        return redirect(url_for('quiz'))
+    if not audio_filename:
+     flash('سجّل إجابتك الصوتية قبل الإرسال.')
+    return redirect(url_for('quiz'))
 
     if user.role == 'participant' and not QuestionAccess.query.filter_by(
         user_id=user.id,
@@ -370,7 +566,6 @@ def submit_answer(user):
     db.session.add(AudioAnswer(
         user_id=user.id,
         question_id=question.id,
-        answer_text=answer_text or None,
         audio_file=audio_filename or '',
     ))
     record_answer_streak(user)
@@ -527,27 +722,111 @@ def assign_score(user, answer_id):
 @staff_required
 def set_user_role(user, user_id):
     if not can_appoint(user):
-        flash('تعيين المضيفين والمشرفين متاح للمضيف الرئيسي فقط.')
+        flash('تغيير أدوار الحسابات متاح للمضيف الرئيسي فقط.')
         return redirect(url_for('admin'))
 
     target = User.query.get_or_404(user_id)
-    new_role = request.form.get('role')
-    if new_role not in ROLE_LABELS:
-        flash('دور غير صالح.')
+    if target.id == user.id or target.role == 'super_admin':
+        flash('لا يمكن تغيير دور حساب المضيف الرئيسي.')
         return redirect(url_for('admin'))
 
-    if target.id == user.id and new_role != 'super_admin':
-        other_hosts = User.query.filter(
-            User.role == 'super_admin',
-            User.id != user.id,
-        ).count()
-        if other_hosts == 0:
-            flash('لا يمكن إزالة المضيف الوحيد.')
-            return redirect(url_for('admin'))
+    new_role = request.form.get('role')
+    if new_role not in ('participant', 'co_host', 'moderator'):
+        flash('الدور المحدد غير صالح.')
+        return redirect(url_for('admin'))
 
     target.role = new_role
     db.session.commit()
-    flash(f'تم تعيين {target.username} كـ{ROLE_LABELS[new_role]}.')
+    flash(f'تم تغيير دور {target.username} إلى {ROLE_LABELS[new_role]}.')
+    return redirect(url_for('admin'))
+
+
+@app.route('/admin/users/<int:user_id>/email', methods=['POST'])
+@staff_required
+def set_user_email(user, user_id):
+    if not can_appoint(user):
+        flash('تعديل بريد استعادة الحسابات متاح للمضيف الرئيسي فقط.')
+        return redirect(url_for('admin'))
+
+    target = User.query.get_or_404(user_id)
+    email = normalize_email(request.form.get('email'))
+    if not is_valid_email(email):
+        flash('أدخل بريدًا إلكترونيًا صحيحًا.')
+        return redirect(url_for('admin'))
+
+    existing_email = User.query.filter(
+        db.func.lower(User.email) == email,
+        User.id != target.id,
+    ).first()
+    if existing_email:
+        flash('البريد الإلكتروني مستخدم في حساب آخر.')
+        return redirect(url_for('admin'))
+
+    target.email = email
+    db.session.commit()
+    flash(f'تم حفظ بريد استعادة كلمة المرور لحساب {target.username}.')
+    return redirect(url_for('admin'))
+
+
+@app.route('/admin/users/<int:user_id>/toggle', methods=['POST'])
+@staff_required
+def toggle_user_active(user, user_id):
+    target = User.query.get_or_404(user_id)
+    if target.id == user.id or target.role == 'super_admin':
+        flash('لا يمكن إيقاف حساب المضيف الرئيسي.')
+        return redirect(url_for('admin'))
+    if target.role in ('co_host', 'moderator') and not can_appoint(user):
+        flash('إدارة حسابات المضيفين والمشرفين متاحة للمضيف الرئيسي فقط.')
+        return redirect(url_for('admin'))
+
+    target.is_active = not bool(target.is_active)
+    db.session.commit()
+    flash(
+        f'تم {"تفعيل" if target.is_active else "إيقاف"} حساب {target.username}.'
+    )
+    return redirect(url_for('admin'))
+
+
+@app.route('/admin/users/<int:user_id>/delete', methods=['POST'])
+@staff_required
+def delete_user(user, user_id):
+    if not can_appoint(user):
+        flash('حذف الحسابات متاح للمضيف الرئيسي فقط.')
+        return redirect(url_for('admin'))
+
+    target = User.query.get_or_404(user_id)
+    if target.id == user.id or target.role == 'super_admin':
+        flash('لا يمكن حذف حساب المضيف الرئيسي.')
+        return redirect(url_for('admin'))
+
+    username = target.username
+    answers = AudioAnswer.query.filter_by(user_id=target.id).all()
+    uploaded_files = [answer.audio_file for answer in answers if answer.audio_file]
+    for answer in answers:
+        db.session.delete(answer)
+    QuestionAccess.query.filter_by(user_id=target.id).delete()
+    Attendance.query.filter_by(user_id=target.id).delete()
+    PasswordResetToken.query.filter_by(user_id=target.id).delete()
+    db.session.delete(target)
+    db.session.commit()
+
+    failed_files = []
+    for filename in uploaded_files:
+        if os.path.basename(filename) != filename:
+            app.logger.error('Skipped invalid uploaded filename while deleting user: %r', filename)
+            failed_files.append(filename)
+            continue
+        path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+        except OSError:
+            app.logger.exception('Could not remove uploaded answer file %s', filename)
+            failed_files.append(filename)
+
+    flash(f'تم حذف حساب {username} وسجلاته.')
+    if failed_files:
+        flash('تعذر حذف بعض الملفات الصوتية المرتبطة بالحساب؛ راجع سجل التطبيق.')
     return redirect(url_for('admin'))
 
 
