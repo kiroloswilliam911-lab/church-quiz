@@ -196,8 +196,7 @@ def is_primary_host(user):
         user
         and user.is_active
         and user.username.casefold() == 'churchhost'
-        and user.role == 'super_admin'
-        )
+        and user.role == 'super_admin')
 
 
 def normalize_email(email):

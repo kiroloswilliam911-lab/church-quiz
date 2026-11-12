@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>المسابقات - مسابقات الكنيسة</title>
     <style>
+        * {
+            box-sizing: border-box;
+        }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: linear-gradient(rgba(7, 28, 48, 0.48), rgba(7, 28, 48, 0.62)), url("{{ url_for('static', filename='images/masabaqa.jpg') }}") center / cover fixed no-repeat;
@@ -15,6 +18,7 @@
             justify-content: center;
             align-items: center;
             min-height: 100vh;
+            min-height: 100dvh;
         }
         .card {
             background: white;
@@ -93,6 +97,17 @@
             text-decoration: none;
             font-weight: bold;
             margin-top: 20px;
+        }
+        @media (max-width: 480px) {
+            body {
+                padding: 12px;
+            }
+            .card {
+                padding: 24px 16px;
+            }
+            .recorder-controls {
+                flex-wrap: wrap;
+            }
         }
     </style>
 </head>

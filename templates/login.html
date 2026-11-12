@@ -2,18 +2,23 @@
     <html lang="ar" dir="rtl">
     <head>
         <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>تسجيل الدخول - مسابقات الكنيسة</title>
         <style>
+            * {
+                box-sizing: border-box;
+            }
             body {
                 font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
                 background: linear-gradient(rgba(7, 28, 48, 0.48), rgba(7, 28, 48, 0.62)), url("{{ url_for('static', filename='images/masabaqa.jpg') }}") center / cover fixed no-repeat;
                 color: #fff;
                 margin: 0;
-                padding: 0;
+                padding: 16px 12px;
                 display: flex;
                 justify-content: center;
                 align-items: center;
-                height: 100vh;
+                min-height: 100vh;
+                min-height: 100dvh;
             }
             .card {
                 background: white;
@@ -22,7 +27,7 @@
                 border-radius: 15px;
                 box-shadow: 0 10px 25px rgba(0,0,0,0.2);
                 max-width: 400px;
-                width: 90%;
+                width: 100%;
                 text-align: center;
             }
             h2 {
@@ -68,6 +73,11 @@
             }
             .back-link:hover {
                 text-decoration: underline;
+            }
+            @media (max-width: 480px) {
+                .card {
+                    padding: 28px 20px;
+                }
             }
         </style>
     </head>

@@ -2,18 +2,23 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>حسابي - مسابقات الكنيسة</title>
     <style>
+        * {
+            box-sizing: border-box;
+        }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: linear-gradient(rgba(7, 28, 48, 0.48), rgba(7, 28, 48, 0.62)), url("{{ url_for('static', filename='images/masabaqa.jpg') }}") center / cover fixed no-repeat;
             color: #fff;
             margin: 0;
-            padding: 20px;
+            padding: 16px 12px;
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
+            min-height: 100dvh;
         }
         .card {
             background: white;
@@ -47,6 +52,11 @@
             text-decoration: none;
             font-weight: bold;
             margin-top: 20px;
+        }
+        @media (max-width: 480px) {
+            .card {
+                padding: 24px 18px;
+            }
         }
     </style>
 </head>
