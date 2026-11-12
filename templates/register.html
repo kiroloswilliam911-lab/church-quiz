@@ -81,21 +81,30 @@
 </head>
 <body>
     <div class="card">
-        <h2>إنشاء حساب جديد</h2>
+        <h2>{% if step == 'name' %}اختيار اسمك في الموقع{% else %}إنشاء حساب جديد{% endif %}</h2>
         
         {% if message %}
             <div class="error">{{ message }}</div>
         {% endif %}
 
         <form method="POST">
-            <input type="text" name="username" placeholder="اسم المستخدم" required>
-            <input type="email" name="email" placeholder="البريد الإلكتروني لاستعادة كلمة المرور" autocomplete="email" required>
-            <input type="password" name="password" placeholder="كلمة المرور" required>
-            {% if bootstrap_available %}
-                <input type="password" name="admin_code" placeholder="رمز إنشاء المضيف الرئيسي (اختياري)">
+            {% if step == 'name' %}
+                <input type="hidden" name="step" value="name">
+                <p>تم تسجيل البريد الإلكتروني {{ email }}. اختر الاسم الذي سيظهر لك في الموقع.</p>
+                <input type="text" name="username" placeholder="الاسم الذي سيظهر في الموقع" maxlength="100" autocomplete="nickname" required>
+                {% if bootstrap_available %}
+                    <input type="password" name="admin_code" placeholder="رمز إنشاء المضيف الرئيسي (اختياري)" autocomplete="off">
+                {% endif %}
+            {% else %}
+                <input type="email" name="email" placeholder="البريد الإلكتروني" autocomplete="email" required>
+                <input type="password" name="password" placeholder="كلمة المرور" autocomplete="new-password" required>
             {% endif %}
-            <button type="submit" class="btn">تسجيل الدخول للمسابقة</button>
+            <button type="submit" class="btn">{% if step == 'name' %}إنشاء الحساب{% else %}متابعة{% endif %}</button>
         </form>
+
+        {% if step == 'name' %}
+            <a href="{{ url_for('register', restart=1) }}" class="back-link">استخدام بريد إلكتروني آخر</a>
+        {% endif %}
         
         <a href="/" class="back-link">العودة للرئيسية</a>
     </div>

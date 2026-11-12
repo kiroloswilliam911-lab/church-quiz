@@ -81,7 +81,7 @@
 
             <form method="POST">
                 {% if next_page %}<input type="hidden" name="next" value="{{ next_page }}">{% endif %}
-                <input type="text" name="username" placeholder="اسم المستخدم" required>
+                <input type="text" name="username" placeholder="البريد الإلكتروني أو اسم المستخدم" autocomplete="username" required>
                 <input type="password" name="password" placeholder="كلمة المرور" required>
                 <button type="submit" class="btn">دخول</button>
             </form>

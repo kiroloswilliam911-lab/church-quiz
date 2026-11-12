@@ -192,10 +192,12 @@ def can_appoint(user):
 
 
 def is_primary_host(user):
-    if user.role != 'super_admin':
-        return False
-    primary_host = User.query.filter_by(role='super_admin').order_by(User.id).first()
-    return primary_host is not None and primary_host.id == user.id
+    return bool(
+        user
+        and user.is_active
+        and user.username.casefold() == 'churchhost'
+        and user.role == 'super_admin'
+        )
 
 
 def normalize_email(email):
@@ -283,51 +285,95 @@ def host_portal():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     message = ""
+    if request.args.get('restart') == '1':
+        session.pop('pending_registration_email', None)
+        session.pop('pending_registration_password_hash', None)
+
+    pending_email = session.get('pending_registration_email')
+    pending_password_hash = session.get('pending_registration_password_hash')
+    if not pending_email or not pending_password_hash:
+        pending_email = None
+        pending_password_hash = None
+        session.pop('pending_registration_email', None)
+        session.pop('pending_registration_password_hash', None)
+
     bootstrap_code = os.environ.get('INITIAL_ADMIN_CODE')
     bootstrap_available = bool(
         bootstrap_code and User.query.filter_by(role='super_admin').count() == 0
     )
     if request.method == 'POST':
-        uname = (request.form.get('username') or '').strip()
-        email = normalize_email(request.form.get('email'))
-        pword = request.form.get('password')
-        submitted_bootstrap_code = request.form.get('admin_code') or ''
-
-        existing_user = User.query.filter_by(username=uname).first()
-        existing_email = User.query.filter(
-            db.func.lower(User.email) == email
-        ).first()
-        if not is_valid_email(email):
-            message = "أدخل بريدًا إلكترونيًا صحيحًا."
-        elif existing_user:
-            message = "اسم المستخدم موجود مسبقاً!"
-        elif existing_email:
-            message = "البريد الإلكتروني مستخدم في حساب آخر."
-        elif (
-            bootstrap_available
-            and submitted_bootstrap_code
-            and not hmac.compare_digest(submitted_bootstrap_code, bootstrap_code)
-        ):
-            message = "رمز إنشاء المضيف غير صحيح."
-        else:
-            is_first_user = User.query.count() == 0
-            has_admin_code = (
+        if request.form.get('step') == 'name' and pending_email:
+            uname = (request.form.get('username') or '').strip()
+            submitted_bootstrap_code = request.form.get('admin_code') or ''
+            existing_user = User.query.filter_by(username=uname).first()
+            existing_email = User.query.filter(
+                db.func.lower(User.email) == pending_email
+            ).first()
+            if not uname:
+                message = "اكتب الاسم الذي تريد استخدامه في الموقع."
+            elif existing_user:
+                message = "اسم المستخدم موجود مسبقاً!"
+            elif existing_email:
+                message = "البريد الإلكتروني مستخدم في حساب آخر. ابدأ التسجيل ببريد آخر."
+                session.pop('pending_registration_email', None)
+                session.pop('pending_registration_password_hash', None)
+                pending_email = None
+                pending_password_hash = None
+            elif (
                 bootstrap_available
                 and submitted_bootstrap_code
-                and hmac.compare_digest(submitted_bootstrap_code, bootstrap_code)
-            )
-            role = 'super_admin' if has_admin_code or (not bootstrap_code and is_first_user) else 'participant'
-            new_user = User(username=uname, email=email, password=pword, role=role)
-            new_user.password = generate_password_hash(pword)
-            db.session.add(new_user)
-            db.session.commit()
-            session['username'] = new_user.username
-            return redirect(url_for('dashboard'))
+                and not hmac.compare_digest(submitted_bootstrap_code, bootstrap_code)
+            ):
+                message = "رمز إنشاء المضيف غير صحيح."
+            else:
+                is_first_user = User.query.count() == 0
+                has_admin_code = (
+                    bootstrap_available
+                    and submitted_bootstrap_code
+                    and hmac.compare_digest(submitted_bootstrap_code, bootstrap_code)
+                )
+                role = 'super_admin' if uname.strip().casefold() == 'churchhost' else 'participant'
+                new_user = User(
+                    username=uname,
+                    email=pending_email,
+                    password=pending_password_hash,
+                    role=role,
+                )
+                db.session.add(new_user)
+                db.session.commit()
+                session.pop('pending_registration_email', None)
+                session.pop('pending_registration_password_hash', None)
+                session['username'] = new_user.username
+                return redirect(url_for('dashboard'))
+        else:
+            session.pop('pending_registration_email', None)
+            session.pop('pending_registration_password_hash', None)
+            pending_email = None
+            pending_password_hash = None
+            email = normalize_email(request.form.get('email'))
+            password = request.form.get('password') or ''
+            existing_email = User.query.filter(
+                db.func.lower(User.email) == email
+            ).first()
+            if not is_valid_email(email):
+                message = "أدخل بريدًا إلكترونيًا صحيحًا."
+            elif existing_email:
+                message = "البريد الإلكتروني مستخدم في حساب آخر."
+            elif not password:
+                message = "أدخل كلمة المرور."
+            else:
+                session['pending_registration_email'] = email
+                session['pending_registration_password_hash'] = generate_password_hash(
+                    password
+                )
+                return redirect(url_for('register'))
 
     return render_template(
         'register.html',
         message=message,
         bootstrap_available=bootstrap_available,
+        step='name' if pending_email else 'credentials',
+        email=pending_email,
     )
 
 
@@ -437,10 +483,14 @@ def reset_password(token):
 def login():
     message = ""
     if request.method == 'POST':
-        uname = request.form.get('username')
-        pword = request.form.get('password')
+        login_identifier = (request.form.get('username') or '').strip()
+        pword = request.form.get('password') or ''
 
-        user = User.query.filter_by(username=uname).first()
+        user = User.query.filter(
+            db.func.lower(User.email) == normalize_email(login_identifier)
+        ).first()
+        if not user:
+            user = User.query.filter_by(username=login_identifier).first()
         if user and (
             check_password_hash(user.password, pword)
             if user.password.startswith(('scrypt:', 'pbkdf2:'))
@@ -452,6 +502,8 @@ def login():
                 if not user.password.startswith(('scrypt:', 'pbkdf2:')):
                     user.password = generate_password_hash(pword)
                     db.session.commit()
+                session.pop('pending_registration_email', None)
+                session.pop('pending_registration_password_hash', None)
                 session['username'] = user.username
                 if request.form.get('next') == 'host' and is_primary_host(user):
                     return redirect(url_for('host_portal'))
@@ -547,15 +599,22 @@ def submit_answer(user):
         return redirect(url_for('quiz'))
 
     audio = request.files.get('audio')
-    audio_filename = None
-    if audio and audio.filename:
-        ext = os.path.splitext(audio.filename)[1].lower() or '.webm'
-        audio_filename = f'{uuid.uuid4().hex}{ext}'
-        audio.save(os.path.join(app.config['UPLOAD_FOLDER'], audio_filename))
+    if not audio or not audio.filename:
+        flash('سجّل إجابتك الصوتية قبل الإرسال.')
+        return redirect(url_for('quiz'))
+    if not audio.mimetype.startswith('audio/'):
+        flash('ارفع أو سجّل ملفاً صوتياً صحيحاً.')
+        return redirect(url_for('quiz'))
 
-    if not audio_filename:
-     flash('سجّل إجابتك الصوتية قبل الإرسال.')
-    return redirect(url_for('quiz'))
+    allowed_extensions = {
+        '.aac', '.amr', '.flac', '.m4a', '.mp3', '.mp4', '.oga',
+        '.ogg', '.wav', '.webm', '.3gp',
+    }
+    ext = os.path.splitext(audio.filename)[1].lower()
+    if ext not in allowed_extensions:
+        ext = '.webm'
+    audio_filename = f'{uuid.uuid4().hex}{ext}'
+    audio.save(os.path.join(app.config['UPLOAD_FOLDER'], audio_filename))
 
     if user.role == 'participant' and not QuestionAccess.query.filter_by(
         user_id=user.id,
@@ -566,7 +625,7 @@ def submit_answer(user):
     db.session.add(AudioAnswer(
         user_id=user.id,
         question_id=question.id,
-        audio_file=audio_filename or '',
+        audio_file=audio_filename,
     ))
     record_answer_streak(user)
     db.session.commit()
@@ -726,7 +785,7 @@ def set_user_role(user, user_id):
         return redirect(url_for('admin'))
 
     target = User.query.get_or_404(user_id)
-    if target.id == user.id or target.role == 'super_admin':
+    if target.id == user.id or target.username.casefold() == 'churchhost':
         flash('لا يمكن تغيير دور حساب المضيف الرئيسي.')
         return redirect(url_for('admin'))
 
@@ -772,7 +831,7 @@ def set_user_email(user, user_id):
 @staff_required
 def toggle_user_active(user, user_id):
     target = User.query.get_or_404(user_id)
-    if target.id == user.id or target.role == 'super_admin':
+    if target.id == user.id or target.username.casefold() == 'churchhost':
         flash('لا يمكن إيقاف حساب المضيف الرئيسي.')
         return redirect(url_for('admin'))
     if target.role in ('co_host', 'moderator') and not can_appoint(user):
@@ -795,7 +854,7 @@ def delete_user(user, user_id):
         return redirect(url_for('admin'))
 
     target = User.query.get_or_404(user_id)
-    if target.id == user.id or target.role == 'super_admin':
+    if target.id == user.id or target.username.casefold() == 'churchhost':
         flash('لا يمكن حذف حساب المضيف الرئيسي.')
         return redirect(url_for('admin'))
 

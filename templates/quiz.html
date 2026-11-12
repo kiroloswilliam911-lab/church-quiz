@@ -2,6 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>المسابقات - مسابقات الكنيسة</title>
     <style>
         body {
@@ -27,6 +28,51 @@
         h1 { color: #0984e3; margin-bottom: 10px; text-align: center; }
         .welcome { text-align: center; color: #636e72; margin-bottom: 30px; }
         .question-box { background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-right: 4px solid #0984e3; }
+        .voice-recorder {
+            background: #eef5f7;
+            border-radius: 14px;
+            padding: 14px;
+            margin-top: 12px;
+        }
+        .recorder-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .record-button, .stop-button, .reset-button, .send-button {
+            border: 0;
+            border-radius: 24px;
+            color: #fff;
+            cursor: pointer;
+            font: inherit;
+            font-weight: bold;
+            padding: 10px 16px;
+        }
+        .record-button { background: #00a884; }
+        .stop-button { background: #d63031; }
+        .reset-button { background: #636e72; }
+        .send-button { background: #0984e3; width: 100%; margin-top: 12px; }
+        .record-button:disabled, .stop-button:disabled, .reset-button:disabled,
+        .send-button:disabled {
+            cursor: not-allowed;
+            opacity: .5;
+        }
+        .recording-status {
+            color: #636e72;
+            font-size: 14px;
+            margin: 10px 0;
+            min-height: 21px;
+        }
+        .recording-status.is-recording { color: #d63031; font-weight: bold; }
+        .recording-time {
+            color: #2d3436;
+            direction: ltr;
+            font-variant-numeric: tabular-nums;
+            font-weight: bold;
+        }
+        .audio-preview { display: block; width: 100%; margin-top: 10px; }
+        .audio-file-label { display: block; color: #636e72; font-size: 13px; margin-top: 10px; }
+        .audio-file { display: block; max-width: 100%; margin-top: 6px; }
         .streak {
             background: linear-gradient(135deg, #fff4e5, #ffe0b2);
             color: #b94a00;
@@ -75,10 +121,23 @@
                     {% if q.id in answered_ids %}
                         <p style="color:#00b894; font-weight:bold;">تم إرسال إجابتك</p>
                     {% else %}
-                        <form method="POST" action="/quiz/answer" enctype="multipart/form-data">
+                        <form class="voice-answer-form" method="POST" action="/quiz/answer" enctype="multipart/form-data">
                             <input type="hidden" name="question_id" value="{{ q.id }}">
-                            <input type="file" name="audio" accept="audio/*" style="margin:8px 0;">
-                            <button type="submit" class="btn" style="background:#00b894; margin-top:8px;">إرسال الإجابة</button>
+                            <div class="voice-recorder">
+                                <div class="recorder-controls">
+                                    <button type="button" class="record-button" data-action="record">🎙️ ابدأ التسجيل</button>
+                                    <button type="button" class="stop-button" data-action="stop" disabled>إيقاف</button>
+                                    <span class="recording-time" aria-live="off">00:00</span>
+                                </div>
+                                <p class="recording-status" role="status" aria-live="polite">سجّل إجابتك الصوتية ثم استمع إليها قبل الإرسال.</p>
+                                <audio class="audio-preview" controls hidden></audio>
+                                <button type="button" class="reset-button" data-action="reset" disabled>إعادة التسجيل</button>
+                                <label class="audio-file-label">
+                                    أو اختر تسجيلاً صوتياً من جهازك
+                                    <input class="audio-file" type="file" name="audio" accept="audio/*">
+                                </label>
+                                <button type="submit" class="send-button" disabled>إرسال الإجابة الصوتية</button>
+                            </div>
                         </form>
                     {% endif %}
                 </div>
@@ -92,5 +151,168 @@
             <a href="/dashboard" class="btn" style="background: #0984e3;">العودة للحساب الشخصي</a>
         </div>
     </div>
+    <script>
+        document.querySelectorAll('.voice-answer-form').forEach((form) => {
+            const recordButton = form.querySelector('[data-action="record"]');
+            const stopButton = form.querySelector('[data-action="stop"]');
+            const resetButton = form.querySelector('[data-action="reset"]');
+            const fileInput = form.querySelector('.audio-file');
+            const submitButton = form.querySelector('.send-button');
+            const status = form.querySelector('.recording-status');
+            const timer = form.querySelector('.recording-time');
+            const preview = form.querySelector('.audio-preview');
+            let recorder = null;
+            let stream = null;
+            let chunks = [];
+            let timerId = null;
+            let seconds = 0;
+            let previewUrl = null;
+
+            const setStatus = (message, isRecording) => {
+                status.textContent = message;
+                status.classList.toggle('is-recording', Boolean(isRecording));
+            };
+
+            const stopTracks = () => {
+                if (stream) {
+                    stream.getTracks().forEach((track) => track.stop());
+                    stream = null;
+                }
+            };
+
+            const clearPreview = () => {
+                if (previewUrl) {
+                    URL.revokeObjectURL(previewUrl);
+                    previewUrl = null;
+                }
+                preview.removeAttribute('src');
+                preview.hidden = true;
+            };
+
+            const showPreview = (blob) => {
+                clearPreview();
+                previewUrl = URL.createObjectURL(blob);
+                preview.src = previewUrl;
+                preview.hidden = false;
+            };
+
+            const formatTime = (value) => {
+                const minutes = Math.floor(value / 60).toString().padStart(2, '0');
+                const remainder = (value % 60).toString().padStart(2, '0');
+                return `${minutes}:${remainder}`;
+            };
+
+            const clearRecording = () => {
+                fileInput.value = '';
+                clearPreview();
+                submitButton.disabled = true;
+                resetButton.disabled = true;
+                recordButton.disabled = false;
+                fileInput.disabled = false;
+                timer.textContent = '00:00';
+                seconds = 0;
+                setStatus('سجّل إجابتك الصوتية ثم استمع إليها قبل الإرسال.');
+            };
+
+            fileInput.addEventListener('change', () => {
+                const file = fileInput.files[0];
+                if (!file) {
+                    clearRecording();
+                    return;
+                }
+                if (!file.type.startsWith('audio/')) {
+                    clearRecording();
+                    setStatus('اختر ملفاً صوتياً صحيحاً.');
+                    return;
+                }
+                showPreview(file);
+                submitButton.disabled = false;
+                resetButton.disabled = false;
+                recordButton.disabled = true;
+                setStatus('تم اختيار التسجيل. استمع إليه قبل الإرسال.');
+            });
+
+            recordButton.addEventListener('click', async () => {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia ||
+                    !window.MediaRecorder || typeof DataTransfer === 'undefined') {
+                    setStatus('التسجيل غير مدعوم في هذا المتصفح. اختر تسجيلاً صوتياً من جهازك.');
+                    return;
+                }
+
+                recordButton.disabled = true;
+                setStatus('بانتظار إذن استخدام الميكروفون...');
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    const mimeType = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus']
+                        .find((type) => MediaRecorder.isTypeSupported(type));
+                    recorder = mimeType
+                        ? new MediaRecorder(stream, { mimeType })
+                        : new MediaRecorder(stream);
+                    chunks = [];
+                    recorder.addEventListener('dataavailable', (event) => {
+                        if (event.data.size) chunks.push(event.data);
+                    });
+                    recorder.addEventListener('stop', () => {
+                        stopTracks();
+                        clearInterval(timerId);
+                        stopButton.disabled = true;
+                        fileInput.disabled = false;
+                        recordButton.disabled = false;
+                        if (!chunks.length) {
+                            setStatus('لم يتم تسجيل صوت. حاول مرة أخرى.');
+                            return;
+                        }
+                        const type = recorder.mimeType || chunks[0].type || 'audio/webm';
+                        const blob = new Blob(chunks, { type });
+                        const extension = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
+                        const transfer = new DataTransfer();
+                        transfer.items.add(new File([blob], `answer.${extension}`, { type }));
+                        fileInput.files = transfer.files;
+                        showPreview(blob);
+                        submitButton.disabled = false;
+                        resetButton.disabled = false;
+                        setStatus('تم التسجيل. استمع إلى إجابتك أو أعد التسجيل.');
+                    });
+                    recorder.addEventListener('error', () => {
+                        stopTracks();
+                        stopButton.disabled = true;
+                        recordButton.disabled = false;
+                        fileInput.disabled = false;
+                        setStatus('حدثت مشكلة أثناء التسجيل. حاول مرة أخرى.');
+                    });
+                    recorder.start();
+                    seconds = 0;
+                    timer.textContent = '00:00';
+                    timerId = setInterval(() => {
+                        seconds += 1;
+                        timer.textContent = formatTime(seconds);
+                    }, 1000);
+                    stopButton.disabled = false;
+                    fileInput.disabled = true;
+                    setStatus('جاري التسجيل... أوقف التسجيل بعد انتهاء إجابتك.', true);
+                } catch (error) {
+                    stopTracks();
+                    recordButton.disabled = false;
+                    setStatus('تعذر فتح الميكروفون. اسمح للموقع باستخدامه وتأكد من اتصال آمن.');
+                }
+            });
+
+            stopButton.addEventListener('click', () => {
+                if (recorder && recorder.state === 'recording') recorder.stop();
+            });
+
+            resetButton.addEventListener('click', clearRecording);
+
+            form.addEventListener('submit', (event) => {
+                if (!fileInput.files.length) {
+                    event.preventDefault();
+                    setStatus('سجّل إجابتك الصوتية أولاً.');
+                    return;
+                }
+                submitButton.disabled = true;
+                setStatus('جاري إرسال إجابتك...');
+            });
+        });
+    </script>
 </body>
 </html>
